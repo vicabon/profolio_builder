@@ -18,9 +18,9 @@
         .card { background: var(--card); border: 1px solid var(--line); border-radius: 14px; padding: 20px; box-shadow: 0 1px 3px rgba(16,24,40,.04); margin-bottom: 20px; }
         .card h2 { font-size: 16px; margin: 0 0 14px; display: flex; align-items: center; gap: 8px; }
         .summary-row { display: flex; gap: 16px; flex-wrap: wrap; }
-        .stat { flex: 1; min-width: 160px; background: linear-gradient(135deg,#f8fafc,#eef2f8); border: 1px solid var(--line); border-radius: 12px; padding: 16px; }
+        .stat { flex: 1; min-width: 140px; background: linear-gradient(135deg,#f8fafc,#eef2f8); border: 1px solid var(--line); border-radius: 12px; padding: 16px; overflow: hidden; }
         .stat .label { font-size: 12px; color: var(--muted); }
-        .stat .value { font-size: 26px; font-weight: 700; margin-top: 6px; }
+        .stat .value { font-size: clamp(18px, 5vw, 26px); font-weight: 700; margin-top: 6px; overflow-wrap: anywhere; line-height: 1.2; }
         form.add { display: grid; grid-template-columns: 1.1fr 1.4fr .8fr auto auto; gap: 10px; align-items: end; }
         form.add .field { display: flex; flex-direction: column; gap: 5px; }
         form.add label { font-size: 12px; color: var(--muted); font-weight: 600; }
@@ -29,8 +29,9 @@
         .btn.ghost { background: #eef2f8; color: var(--ink); }
         .btn:hover { filter: brightness(1.05); }
         .preview { font-size: 12px; color: var(--muted); margin-top: 8px; min-height: 16px; }
+        .table-wrap { width: 100%; overflow-x: auto; -webkit-overflow-scrolling: touch; }
         table { width: 100%; border-collapse: collapse; }
-        th, td { padding: 12px 10px; text-align: right; font-size: 14px; border-bottom: 1px solid var(--line); }
+        th, td { padding: 12px 10px; text-align: right; font-size: 14px; border-bottom: 1px solid var(--line); white-space: nowrap; }
         th:first-child, td:first-child, th:nth-child(2), td:nth-child(2) { text-align: left; }
         th { font-size: 12px; color: var(--muted); text-transform: uppercase; letter-spacing: .03em; }
         tbody tr:hover { background: #f8fafc; }
@@ -78,7 +79,19 @@
         .sidebar-title { margin-top: 0; color: var(--accent); border-bottom: 2px solid var(--accent); padding-bottom: 8px; font-size: 18px; }
         @media (max-width: 720px) {
             form.add { grid-template-columns: 1fr 1fr; }
-            body { padding: 14px; }
+            body { padding: 12px; }
+            h1 { font-size: 20px; }
+            .card { padding: 14px; }
+            .summary-row { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+            .stat { min-width: 0; padding: 12px; }
+            th, td { padding: 9px 8px; font-size: 13px; }
+            .tab { padding: 9px 12px; font-size: 14px; }
+            .ticker-picker select { min-width: 0; width: 100%; }
+            .metric-box { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 8px; }
+            .metric { min-width: 0; padding: 10px 6px; }
+            .metric-value { font-size: 15px; }
+            .gauge-labels { font-size: 9px; }
+            .price-box { font-size: 17px; }
         }
     </style>
 </head>
@@ -264,10 +277,10 @@ async function loadPortfolio() {
         </tr>`;
     }).join("");
 
-    area.innerHTML = `<table>
+    area.innerHTML = `<div class="table-wrap"><table>
         <thead><tr><th>Ticker</th><th>名稱</th><th>股數</th><th>現價</th><th>台幣總額</th><th>占比</th><th>Beta</th><th></th></tr></thead>
         <tbody>${rows}</tbody>
-    </table>`;
+    </table></div>`;
 }
 
 async function removeHolding(ticker) {
@@ -536,8 +549,10 @@ document.getElementById("tabs").addEventListener("click", e => {
 });
 
 async function refreshAll() {
+    // 載入網頁時就把兩個分頁的報價與數據全部更新
     await loadPortfolio();
     await loadHistory();
+    await loadLohas();
 }
 
 if (STATIC) {
