@@ -1,7 +1,4 @@
+flask
+requests
 numpy
 pandas
-matplotlib
-scikit-learn
-yfinance
-mpld3
-fear-greed

@@ -1,0 +1,559 @@
+<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>我的投資組合儀表板</title>
+    <script src="https://cdn.plot.ly/plotly-2.24.1.min.js"></script>
+    <style>
+        :root {
+            --bg: #f4f6f9; --card: #ffffff; --ink: #1a2233; --muted: #6b7686;
+            --line: #e3e8ef; --accent: #2f6fed; --up: #d92d20; --down: #059669;
+        }
+        * { box-sizing: border-box; }
+        body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Noto Sans TC", sans-serif; margin: 0; padding: 24px; background: var(--bg); color: var(--ink); }
+        .wrap { max-width: 1180px; margin: 0 auto; }
+        h1 { font-size: 24px; margin: 0 0 4px; }
+        .sub { color: var(--muted); font-size: 13px; margin-bottom: 20px; }
+        .card { background: var(--card); border: 1px solid var(--line); border-radius: 14px; padding: 20px; box-shadow: 0 1px 3px rgba(16,24,40,.04); margin-bottom: 20px; }
+        .card h2 { font-size: 16px; margin: 0 0 14px; display: flex; align-items: center; gap: 8px; }
+        .summary-row { display: flex; gap: 16px; flex-wrap: wrap; }
+        .stat { flex: 1; min-width: 160px; background: linear-gradient(135deg,#f8fafc,#eef2f8); border: 1px solid var(--line); border-radius: 12px; padding: 16px; }
+        .stat .label { font-size: 12px; color: var(--muted); }
+        .stat .value { font-size: 26px; font-weight: 700; margin-top: 6px; }
+        form.add { display: grid; grid-template-columns: 1.1fr 1.4fr .8fr auto auto; gap: 10px; align-items: end; }
+        form.add .field { display: flex; flex-direction: column; gap: 5px; }
+        form.add label { font-size: 12px; color: var(--muted); font-weight: 600; }
+        form.add input { padding: 10px 12px; border: 1px solid var(--line); border-radius: 8px; font-size: 15px; }
+        .btn { padding: 10px 18px; border: none; border-radius: 8px; background: var(--accent); color: #fff; font-size: 14px; font-weight: 600; cursor: pointer; white-space: nowrap; }
+        .btn.ghost { background: #eef2f8; color: var(--ink); }
+        .btn:hover { filter: brightness(1.05); }
+        .preview { font-size: 12px; color: var(--muted); margin-top: 8px; min-height: 16px; }
+        table { width: 100%; border-collapse: collapse; }
+        th, td { padding: 12px 10px; text-align: right; font-size: 14px; border-bottom: 1px solid var(--line); }
+        th:first-child, td:first-child, th:nth-child(2), td:nth-child(2) { text-align: left; }
+        th { font-size: 12px; color: var(--muted); text-transform: uppercase; letter-spacing: .03em; }
+        tbody tr:hover { background: #f8fafc; }
+        .tag { display: inline-block; font-size: 11px; padding: 2px 7px; border-radius: 6px; margin-left: 6px; }
+        .tag.tw { background: #e0edff; color: #1d4ed8; }
+        .tag.us { background: #ffe9d6; color: #c2410c; }
+        .tag.cash { background: #dcfce7; color: #15803d; }
+        .weight-cell { position: relative; }
+        .weight-bar { display: inline-block; height: 8px; border-radius: 4px; background: var(--accent); vertical-align: middle; margin-right: 6px; }
+        .del { color: var(--muted); cursor: pointer; border: none; background: none; font-size: 16px; }
+        .del:hover { color: var(--up); }
+        .charts { display: grid; grid-template-columns: 1fr; gap: 20px; }
+        .toolbar { display: flex; gap: 8px; margin-bottom: 14px; flex-wrap: wrap; align-items: center; }
+        .toolbar .rng { display: flex; gap: 6px; }
+        .rng button { padding: 6px 12px; border: 1px solid var(--line); background: #fff; border-radius: 7px; cursor: pointer; font-size: 13px; }
+        .rng button.active { background: var(--accent); color: #fff; border-color: var(--accent); }
+        .muted-note { color: var(--muted); font-size: 12px; }
+        .loading { color: var(--muted); font-size: 14px; padding: 20px; text-align: center; }
+        .empty { color: var(--muted); text-align: center; padding: 30px; }
+        /* 分頁 */
+        .tabs { display: flex; gap: 6px; margin-bottom: 18px; border-bottom: 2px solid var(--line); }
+        .tab { padding: 10px 20px; border: none; background: none; cursor: pointer; font-size: 15px; font-weight: 600; color: var(--muted); border-bottom: 3px solid transparent; margin-bottom: -2px; }
+        .tab.active { color: var(--accent); border-bottom-color: var(--accent); }
+        .tab-panel { display: none; }
+        .tab-panel.active { display: block; }
+        /* 樂活五線譜（沿用原儀表板樣式） */
+        .ticker-picker { margin-bottom: 4px; }
+        .ticker-picker label { display: block; color: var(--muted); font-size: 13px; font-weight: 600; margin-bottom: 7px; }
+        .ticker-picker select { min-width: 240px; padding: 10px 14px; border: 1px solid var(--line); border-radius: 8px; background: #fff; color: var(--ink); font-size: 16px; }
+        .metric-box { display: flex; gap: 15px; margin: 18px 0 4px; flex-wrap: wrap; }
+        .metric { background: #f8fafc; border: 1px solid var(--line); padding: 12px 20px; border-radius: 8px; flex: 1; min-width: 140px; text-align: center; }
+        .metric-title { font-size: 11px; color: var(--muted); }
+        .metric-value { font-size: 20px; font-weight: bold; color: var(--ink); margin-top: 5px; }
+        .gauge-wrapper { margin-top: 18px; }
+        .gauge-title { font-size: 14px; font-weight: bold; margin-bottom: 12px; }
+        .gauge-bar-bg { background: #e9ecef; height: 20px; border-radius: 10px; position: relative; overflow: visible; }
+        .gauge-fill { height: 100%; border-radius: 10px 0 0 10px; width: 0; }
+        .gauge-text { position: absolute; top: 1px; font-weight: bold; font-size: 12px; }
+        .gauge-labels { display: flex; justify-content: space-between; margin-top: 6px; font-size: 11px; color: var(--muted); font-weight: bold; }
+        .price-box { background: #f1f5f9; padding: 12px 20px; border-radius: 6px; font-size: 20px; font-weight: bold; margin: 4px 0 15px; display: flex; justify-content: space-between; }
+        .grid-list { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 12px; padding: 0; margin: 0; list-style: none; }
+        .grid-list li { padding: 12px; background: #f8fafc; border-radius: 6px; border-left: 4px solid #ccc; display: flex; flex-direction: column; gap: 4px; }
+        .line-name { font-size: 12px; color: var(--muted); }
+        .line-val { font-size: 16px; font-weight: bold; }
+        .sidebar-title { margin-top: 0; color: var(--accent); border-bottom: 2px solid var(--accent); padding-bottom: 8px; font-size: 18px; }
+        @media (max-width: 720px) {
+            form.add { grid-template-columns: 1fr 1fr; }
+            body { padding: 14px; }
+        }
+    </style>
+</head>
+<body>
+<div class="wrap">
+    <h1>💼 我的投資組合儀表板</h1>
+    <div class="sub">台股 / 台灣 ETF 串接證交所即時報價，美股經 Yahoo Finance 取價並依即時美元匯率換算台幣。盤中即時、盤後收盤。</div>
+    <div class="sub" id="static-stamp" style="color:#15803d;"></div>
+
+    <div class="tabs" id="tabs">
+        <button class="tab active" data-tab="portfolio">💼 投資組合</button>
+        <button class="tab" data-tab="lohas">📈 樂活五線譜</button>
+    </div>
+
+    <div id="tab-portfolio" class="tab-panel active">
+    <div class="card">
+        <div class="summary-row">
+            <div class="stat">
+                <div class="label">總資產（台幣）</div>
+                <div class="value" id="total-value">—</div>
+            </div>
+            <div class="stat">
+                <div class="label">持有檔數</div>
+                <div class="value" id="count-value">—</div>
+            </div>
+            <div class="stat">
+                <div class="label">投組加權 Beta</div>
+                <div class="value" id="beta-value">—</div>
+            </div>
+            <div class="stat">
+                <div class="label">USD / TWD 匯率</div>
+                <div class="value" id="fx-value">—</div>
+            </div>
+        </div>
+    </div>
+
+    <div class="card" id="add-card">
+        <h2>➕ 新增 / 更新持股</h2>
+        <form class="add" id="add-form" autocomplete="off">
+            <div class="field">
+                <label for="f-ticker">Ticker</label>
+                <input id="f-ticker" placeholder="2330.TW / VOO" required>
+            </div>
+            <div class="field">
+                <label for="f-name">股票 / ETF 名稱（可留空自動帶入）</label>
+                <input id="f-name" placeholder="台積電 / Vanguard S&P 500">
+            </div>
+            <div class="field">
+                <label for="f-shares">股數</label>
+                <input id="f-shares" type="number" step="any" min="0" placeholder="1000" required>
+            </div>
+            <button type="button" class="btn ghost" id="preview-btn">查價</button>
+            <button type="submit" class="btn">加入</button>
+        </form>
+        <div class="preview" id="preview"></div>
+        <div class="muted-note" style="margin-top:6px;">台股請加 <code>.TW</code>（上市）或 <code>.TWO</code>（上櫃），美股直接輸入代號。</div>
+    </div>
+
+    <div class="card">
+        <h2>📊 目前持股</h2>
+        <div id="positions-area"><div class="loading">載入中…</div></div>
+    </div>
+
+    <div class="card">
+        <h2>🕰️ 歷史回朔 <span class="muted-note">（假設目前持股數量固定不變，往回推算）</span></h2>
+        <div class="toolbar">
+            <div class="rng" id="range-buttons">
+                <button data-range="1D">1D</button>
+                <button data-range="5D">5D</button>
+                <button data-range="1M">1M</button>
+                <button data-range="6M">6M</button>
+                <button data-range="YTD">YTD</button>
+                <button data-range="1Y" class="active">1Y</button>
+                <button data-range="ALL">全部</button>
+            </div>
+        </div>
+        <div class="charts">
+            <div>
+                <div class="muted-note" style="margin-bottom:6px;">總市值走勢（萬元）</div>
+                <div id="chart-total"></div>
+            </div>
+        </div>
+        <div id="history-status" class="muted-note" style="margin-top:10px;"></div>
+    </div>
+    </div><!-- /tab-portfolio -->
+
+    <div id="tab-lohas" class="tab-panel">
+        <div class="card">
+            <div class="ticker-picker">
+                <label for="lohas-select">選擇商品（來自你的持股）</label>
+                <select id="lohas-select" aria-label="選擇商品"></select>
+            </div>
+            <div class="metric-box">
+                <div class="metric">
+                    <div id="lohas-close-title" class="metric-title"></div>
+                    <div id="lohas-close-value" class="metric-value"></div>
+                </div>
+                <div class="metric">
+                    <div class="metric-title">五線譜中軸 (TL)</div>
+                    <div id="lohas-tl-value" class="metric-value" style="color:#008800;"></div>
+                </div>
+                <div class="metric">
+                    <div class="metric-title">CNN 即時情緒狀態</div>
+                    <div id="lohas-fg-rating" class="metric-value"></div>
+                </div>
+            </div>
+            <div class="gauge-wrapper">
+                <div class="gauge-title" id="lohas-gauge-title">📊 CNN Fear &amp; Greed Index 即時量表</div>
+                <div class="gauge-bar-bg">
+                    <div class="gauge-fill" id="lohas-gauge-fill"></div>
+                    <span class="gauge-text" id="lohas-gauge-text"></span>
+                </div>
+                <div class="gauge-labels">
+                    <span style="color:#cc0000;">極度恐慌 (0)</span>
+                    <span style="color:#ff9900;">恐慌 (25)</span>
+                    <span style="color:#888888;">中立 (50)</span>
+                    <span style="color:#66cc00;">貪婪 (75)</span>
+                    <span style="color:#008800;">極度貪婪 (100)</span>
+                </div>
+            </div>
+        </div>
+        <div class="card">
+            <div id="lohas-chart-title" class="chart-title" style="font-weight:bold;margin-bottom:10px;"></div>
+            <div id="lohas-chart"></div>
+        </div>
+        <div id="lohas-sidebar" class="card"></div>
+    </div><!-- /tab-lohas -->
+</div>
+
+<script>
+const API = "";
+// 靜態模式：GitHub Pages 沒有後端，資料由建置腳本烘焙進 window.STATIC_DATA。
+// 本機 Flask 模式：window.STATIC_DATA 不存在，改打 /api。
+const STATIC = (typeof window.STATIC_DATA !== "undefined") ? window.STATIC_DATA : null;
+const fmtTWD = v => v == null ? "—" : "NT$" + Number(v).toLocaleString("zh-TW", {maximumFractionDigits: 0});
+const fmtPct = v => (v == null ? "—" : Number(v).toFixed(2) + "%");
+
+// ---------- 持股表 ----------
+async function loadPortfolio() {
+    const area = document.getElementById("positions-area");
+    let data;
+    if (STATIC) {
+        data = STATIC.portfolio;
+    } else {
+        area.innerHTML = '<div class="loading">讀取即時報價中…</div>';
+        try {
+            data = await (await fetch(API + "/api/portfolio")).json();
+        } catch (e) {
+            area.innerHTML = '<div class="empty">無法連線後端，請確認 app.py 是否啟動。</div>';
+            return;
+        }
+    }
+
+    document.getElementById("total-value").textContent = fmtTWD(data.totalValue);
+    document.getElementById("count-value").textContent = (data.positions || []).length;
+    document.getElementById("beta-value").textContent = data.portfolioBeta != null ? Number(data.portfolioBeta).toFixed(2) : "—";
+    document.getElementById("fx-value").textContent = data.fxRate ? Number(data.fxRate).toFixed(3) : "—";
+
+    if (!data.positions || !data.positions.length) {
+        area.innerHTML = '<div class="empty">尚未有任何持股，請在上方新增。</div>';
+        return;
+    }
+
+    const maxWeight = Math.max(...data.positions.map(p => p.weight || 0), 1);
+    const rows = data.positions.map(p => {
+        const tag = p.isCash ? '<span class="tag cash">現金</span>'
+            : (p.isTaiwan ? '<span class="tag tw">台股</span>' : '<span class="tag us">美股</span>');
+        const usd = p.priceUsd != null ? `<div class="muted-note">$${Number(p.priceUsd).toFixed(2)} × ${Number(p.fxRate).toFixed(2)}</div>` : "";
+        const barW = ((p.weight || 0) / maxWeight) * 90;
+        const sharesCell = p.isCash ? "—" : Number(p.shares).toLocaleString("zh-TW");
+        const priceCell = p.isCash ? "—"
+            : (p.price == null ? "—" : "NT$" + Number(p.price).toLocaleString("zh-TW", {maximumFractionDigits: 2}) + usd);
+        const delCell = STATIC ? "" : `<button class="del" title="刪除" onclick="removeHolding('${p.ticker}')">✕</button>`;
+        return `<tr>
+            <td><strong>${p.ticker}</strong>${tag}</td>
+            <td>${p.name || ""}</td>
+            <td>${sharesCell}</td>
+            <td>${priceCell}</td>
+            <td><strong>${fmtTWD(p.value)}</strong></td>
+            <td class="weight-cell"><span class="weight-bar" style="width:${barW}px"></span>${fmtPct(p.weight)}</td>
+            <td>${p.beta == null ? "—" : Number(p.beta).toFixed(2)}</td>
+            <td>${delCell}</td>
+        </tr>`;
+    }).join("");
+
+    area.innerHTML = `<table>
+        <thead><tr><th>Ticker</th><th>名稱</th><th>股數</th><th>現價</th><th>台幣總額</th><th>占比</th><th>Beta</th><th></th></tr></thead>
+        <tbody>${rows}</tbody>
+    </table>`;
+}
+
+async function removeHolding(ticker) {
+    if (!confirm(`確定刪除 ${ticker}？`)) return;
+    await fetch(API + "/api/holdings/" + encodeURIComponent(ticker), {method: "DELETE"});
+    await refreshAll();
+}
+
+// ---------- 新增 / 查價 ----------
+document.getElementById("preview-btn").addEventListener("click", async () => {
+    const ticker = document.getElementById("f-ticker").value.trim();
+    const preview = document.getElementById("preview");
+    if (!ticker) { preview.textContent = "請先輸入 ticker"; return; }
+    preview.textContent = "查詢中…";
+    try {
+        const q = await (await fetch(API + "/api/quote/" + encodeURIComponent(ticker))).json();
+        if (q.name && !document.getElementById("f-name").value) document.getElementById("f-name").value = q.name;
+        const usd = q.priceUsd != null ? `（$${q.priceUsd} × 匯率 ${q.fxRate}）` : "";
+        preview.textContent = q.price != null ? `${q.name || ticker}：現價 NT$${q.price} ${usd}` : "查無報價，請確認代號";
+    } catch (e) {
+        preview.textContent = "查詢失敗";
+    }
+});
+
+document.getElementById("add-form").addEventListener("submit", async (e) => {
+    e.preventDefault();
+    const body = {
+        ticker: document.getElementById("f-ticker").value.trim(),
+        name: document.getElementById("f-name").value.trim(),
+        shares: document.getElementById("f-shares").value,
+    };
+    await fetch(API + "/api/holdings", {
+        method: "POST",
+        headers: {"Content-Type": "application/json"},
+        body: JSON.stringify(body),
+    });
+    e.target.reset();
+    document.getElementById("preview").textContent = "";
+    await refreshAll();
+});
+
+// ---------- 歷史圖 ----------
+let historyCache = null;
+let currentRange = "1Y";
+
+// 依區間裁切歷史資料。range: 1D/5D/1M/6M/YTD/1Y/ALL
+function sliceByRange(hist, range) {
+    if (!hist.dates.length) return hist;
+    const n = hist.dates.length;
+    let cutoffIdx;
+    if (range === "YTD") {
+        const year = hist.dates[n - 1].slice(0, 4);
+        cutoffIdx = hist.dates.findIndex(d => d >= year + "-01-01");
+        if (cutoffIdx < 0) cutoffIdx = 0;
+    } else if (range === "ALL") {
+        cutoffIdx = 0;
+    } else {
+        // 以交易日數估算（~21 日/月、~252 日/年）
+        const days = {"1D": 2, "5D": 5, "1M": 21, "6M": 126, "1Y": 252}[range] || n;
+        cutoffIdx = Math.max(0, n - days);
+    }
+    return {
+        dates: hist.dates.slice(cutoffIdx),
+        totalValue: hist.totalValue.slice(cutoffIdx),
+    };
+}
+
+const baseLayout = extra => Object.assign({
+    margin: {l: 62, r: 15, t: 10, b: 40}, height: 340,
+    plot_bgcolor: "#fff", paper_bgcolor: "#fff",
+    xaxis: {type: "date", gridcolor: "#f0f2f5", fixedrange: true},
+    yaxis: {gridcolor: "#f0f2f5", fixedrange: true},
+    hovermode: "x unified",
+}, extra || {});
+
+function drawCharts(hist) {
+    // 總市值走勢（萬元）；Y 軸自動縮放、0 軸不歸零，以易辨識為主
+    const valuesWan = hist.totalValue.map(v => v / 10000);
+    Plotly.react("chart-total", [{
+        x: hist.dates, y: valuesWan, type: "scatter", mode: "lines",
+        line: {color: "#2f6fed", width: 2}, name: "總市值",
+        hovertemplate: "%{y:,.1f} 萬<extra></extra>",
+    }], baseLayout({
+        yaxis: {gridcolor: "#f0f2f5", fixedrange: true, autorange: true,
+                ticksuffix: " 萬", tickformat: ",.0f"},
+    }), {displayModeBar: false, responsive: true});
+}
+
+async function loadHistory() {
+    const status = document.getElementById("history-status");
+    if (STATIC) {
+        historyCache = STATIC.history;
+    } else {
+        status.textContent = "計算歷史回朔中…（首次載入較慢，需抓取各檔歷史股價與匯率）";
+        try {
+            historyCache = await (await fetch(API + "/api/history")).json();
+        } catch (e) {
+            status.textContent = "歷史資料載入失敗。";
+            return;
+        }
+    }
+    if (!historyCache.dates || !historyCache.dates.length) {
+        status.textContent = "尚無足夠資料可回朔（請先新增持股）。";
+        return;
+    }
+    status.textContent = `資料區間：${historyCache.dates[0]} ~ ${historyCache.dates[historyCache.dates.length - 1]}`;
+    drawCharts(sliceByRange(historyCache, currentRange));
+}
+
+document.getElementById("range-buttons").addEventListener("click", e => {
+    if (e.target.tagName !== "BUTTON") return;
+    document.querySelectorAll("#range-buttons button").forEach(b => b.classList.remove("active"));
+    e.target.classList.add("active");
+    currentRange = e.target.dataset.range;
+    if (historyCache) drawCharts(sliceByRange(historyCache, currentRange));
+});
+
+// ================= 樂活五線譜分頁 =================
+let lohasCache = {};        // {ticker: chartData bundle}
+let fearGreed = null;
+let lohasSelected = null;
+let lohasLoaded = false;
+
+function gaugeColor(score) {
+    if (score <= 25) return "#cc0000";
+    if (score <= 45) return "#ff9900";
+    if (score <= 55) return "#888888";
+    if (score <= 75) return "#66cc00";
+    return "#008800";
+}
+
+function renderGauge(fg) {
+    const score = fg.score, color = gaugeColor(score);
+    document.getElementById("lohas-fg-rating").textContent = fg.rating;
+    document.getElementById("lohas-fg-rating").style.color = color;
+    document.getElementById("lohas-gauge-title").innerHTML =
+        `📊 CNN Fear &amp; Greed Index 即時量表（當前分數：${score}）`;
+    const fill = document.getElementById("lohas-gauge-fill");
+    fill.style.width = score + "%";
+    fill.style.background = color;
+    const txt = document.getElementById("lohas-gauge-text");
+    txt.textContent = score;
+    txt.style.left = `calc(${score}% - 12px)`;
+    txt.style.color = score < 10 ? "#333" : "#fff";
+    txt.style.textShadow = score < 10 ? "none" : "1px 1px 2px rgba(0,0,0,.5)";
+}
+
+function renderLohasSidebar(bundle, row) {
+    const c = bundle.currencySymbol;
+    const f = v => c + Number(v).toFixed(2);
+    document.getElementById("lohas-sidebar").innerHTML = `
+        <h3 class="sidebar-title">📈 歷史數據細節（📅 ${row.date}）</h3>
+        <div class="price-box">
+            <span>💰 ${bundle.ticker} 當日股價</span>
+            <span>${f(row.close)}</span>
+        </div>
+        <ul class="grid-list">
+            <li style="border-left-color:#dc3545;"><span class="line-name">🔴 極樂觀線 (+2SD)</span><span class="line-val">${f(row.p2sd)}</span></li>
+            <li style="border-left-color:#ffc107;"><span class="line-name">🟠 相對樂觀 (+1SD)</span><span class="line-val">${f(row.p1sd)}</span></li>
+            <li style="border-left-color:#28a745;"><span class="line-name">🔵 趨勢中軸 (TL)</span><span class="line-val">${f(row.tl)}</span></li>
+            <li style="border-left-color:#007bff;"><span class="line-name">🟢 相對悲觀 (-1SD)</span><span class="line-val">${f(row.m1sd)}</span></li>
+            <li style="border-left-color:#6f42c1;"><span class="line-name">🟣 極悲觀線 (-2SD)</span><span class="line-val">${f(row.m2sd)}</span></li>
+        </ul>`;
+}
+
+function renderLohas(ticker) {
+    const bundle = lohasCache[ticker];
+    if (!bundle || !bundle.chartData || !bundle.chartData.length) {
+        document.getElementById("lohas-chart").innerHTML =
+            '<div class="empty">此商品無五線譜資料。</div>';
+        document.getElementById("lohas-sidebar").innerHTML = "";
+        return;
+    }
+    lohasSelected = ticker;
+    const data = bundle.chartData;
+    const latest = data[data.length - 1];
+    const dates = data.map(r => r.date);
+    const c = bundle.currencySymbol;
+    const f = v => c + Number(v).toFixed(2);
+
+    document.getElementById("lohas-close-title").textContent = `${ticker} 最新收盤價`;
+    document.getElementById("lohas-close-value").textContent = f(latest.close);
+    document.getElementById("lohas-tl-value").textContent = f(latest.tl);
+    document.getElementById("lohas-chart-title").textContent = `📈 ${ticker} 樂活五線譜趨勢圖`;
+    renderLohasSidebar(bundle, latest);
+
+    const traces = [
+        {x: dates, y: data.map(r => r.close), name: `${ticker} 收盤價`, type: "scatter", mode: "lines", line: {color: "#000", width: 2}},
+        {x: dates, y: data.map(r => r.p2sd), name: "極樂觀 (+2SD)", type: "scatter", line: {color: "#dc3545", width: 1.5, dash: "dash"}},
+        {x: dates, y: data.map(r => r.p1sd), name: "相對樂觀 (+1SD)", type: "scatter", line: {color: "#ffc107", width: 1.5, dash: "dash"}},
+        {x: dates, y: data.map(r => r.tl), name: "趨勢中軸 (TL)", type: "scatter", line: {color: "#28a745", width: 2}},
+        {x: dates, y: data.map(r => r.m1sd), name: "相對悲觀 (-1SD)", type: "scatter", line: {color: "#007bff", width: 1.5, dash: "dash"}},
+        {x: dates, y: data.map(r => r.m2sd), name: "極悲觀 (-2SD)", type: "scatter", line: {color: "#6f42c1", width: 1.5, dash: "dash"}},
+    ];
+    const layout = {
+        margin: {r: 10, l: 55, t: 10, b: 30}, height: 420,
+        legend: {orientation: "h", y: -0.15, x: 0.5, xanchor: "center"},
+        xaxis: {type: "date", gridcolor: "#f0f2f5", fixedrange: true},
+        yaxis: {gridcolor: "#f0f2f5", fixedrange: true},
+        plot_bgcolor: "#fff", paper_bgcolor: "#fff", hovermode: "x unified",
+    };
+    const chart = document.getElementById("lohas-chart");
+    Plotly.react(chart, traces, layout, {displayModeBar: false, responsive: true});
+    chart.on("plotly_click", ev => {
+        const row = lohasCache[lohasSelected].chartData[ev.points[0].pointIndex];
+        if (row) renderLohasSidebar(lohasCache[lohasSelected], row);
+    });
+}
+
+async function loadLohas() {
+    if (lohasLoaded) return;
+    const select = document.getElementById("lohas-select");
+
+    if (STATIC) {
+        const bundle = STATIC.lohas || {};
+        lohasCache = bundle.charts || {};
+        fearGreed = bundle.fearGreed || {score: 50, rating: "資料暫缺"};
+    } else {
+        // 以目前持股（排除現金）作為可選商品，逐檔取五線譜
+        const pf = await (await fetch(API + "/api/portfolio")).json();
+        const tickers = (pf.positions || []).filter(p => !p.isCash).map(p => p.ticker);
+        select.innerHTML = tickers.map(t => `<option value="${t}">${t}</option>`).join("");
+        fearGreed = await (await fetch(API + "/api/feargreed")).json();
+        renderGauge(fearGreed);
+        // 逐檔載入（點選時才抓，避免一次等太久）
+        select.onchange = async e => {
+            const t = e.target.value;
+            if (!lohasCache[t]) {
+                document.getElementById("lohas-chart").innerHTML = '<div class="loading">載入五線譜中…</div>';
+                lohasCache[t] = await (await fetch(API + "/api/lohas/" + encodeURIComponent(t))).json();
+            }
+            renderLohas(t);
+        };
+        if (tickers.length) {
+            const first = tickers[0];
+            lohasCache[first] = await (await fetch(API + "/api/lohas/" + encodeURIComponent(first))).json();
+            renderLohas(first);
+        }
+        lohasLoaded = true;
+        return;
+    }
+
+    // 靜態模式：一次性填入選單與圖
+    const tickers = (STATIC.lohas && STATIC.lohas.tickers) || Object.keys(lohasCache);
+    select.innerHTML = tickers.map(t => `<option value="${t}">${t}</option>`).join("");
+    select.onchange = e => renderLohas(e.target.value);
+    renderGauge(fearGreed);
+    if (tickers.length) renderLohas(tickers[0]);
+    lohasLoaded = true;
+}
+
+// 分頁切換
+document.getElementById("tabs").addEventListener("click", e => {
+    if (!e.target.classList.contains("tab")) return;
+    const target = e.target.dataset.tab;
+    document.querySelectorAll(".tab").forEach(t => t.classList.toggle("active", t === e.target));
+    document.querySelectorAll(".tab-panel").forEach(p =>
+        p.classList.toggle("active", p.id === "tab-" + target));
+    if (target === "lohas") {
+        loadLohas().then(() => {
+            // 切換到分頁時 Plotly 需重新調整尺寸
+            const c = document.getElementById("lohas-chart");
+            if (c && c.data) Plotly.Plots.resize(c);
+        });
+    }
+});
+
+async function refreshAll() {
+    await loadPortfolio();
+    await loadHistory();
+}
+
+if (STATIC) {
+    // 靜態快照模式：隱藏新增表單，顯示資料更新時間，不做輪詢。
+    const addCard = document.getElementById("add-card");
+    if (addCard) addCard.style.display = "none";
+    const stamp = document.getElementById("static-stamp");
+    if (stamp && STATIC.generatedAt) {
+        stamp.textContent = "📸 靜態快照 · 資料產生時間：" + STATIC.generatedAt;
+    }
+    refreshAll();
+} else {
+    refreshAll();
+    // 每 30 秒更新即時報價（不重抓歷史）
+    setInterval(loadPortfolio, 30000);
+}
+</script>
+</body>
+</html>
