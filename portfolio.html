@@ -20,7 +20,7 @@
         .summary-row { display: flex; gap: 16px; flex-wrap: wrap; }
         .stat { flex: 1; min-width: 140px; background: linear-gradient(135deg,#f8fafc,#eef2f8); border: 1px solid var(--line); border-radius: 12px; padding: 16px; overflow: hidden; }
         .stat .label { font-size: 12px; color: var(--muted); }
-        .stat .value { font-size: clamp(18px, 5vw, 26px); font-weight: 700; margin-top: 6px; overflow-wrap: anywhere; line-height: 1.2; }
+        .stat .value { font-size: clamp(14px, 3.6vw, 20px); font-weight: 700; margin-top: 6px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; line-height: 1.2; }
         form.add { display: grid; grid-template-columns: 1.1fr 1.4fr .8fr auto auto; gap: 10px; align-items: end; }
         form.add .field { display: flex; flex-direction: column; gap: 5px; }
         form.add label { font-size: 12px; color: var(--muted); font-weight: 600; }
@@ -161,10 +161,10 @@
             <div class="rng" id="range-buttons">
                 <button data-range="1D">1D</button>
                 <button data-range="5D">5D</button>
-                <button data-range="1M">1M</button>
+                <button data-range="1M" class="active">1M</button>
                 <button data-range="6M">6M</button>
                 <button data-range="YTD">YTD</button>
-                <button data-range="1Y" class="active">1Y</button>
+                <button data-range="1Y">1Y</button>
                 <button data-range="ALL">全部</button>
             </div>
         </div>
@@ -416,7 +416,7 @@ document.getElementById("add-form").addEventListener("submit", async (e) => {
 
 // ---------- 歷史圖 ----------
 let historyCache = null;
-let currentRange = "1Y";
+let currentRange = "1M";
 
 // 依區間裁切歷史資料。range: 1D/5D/1M/6M/YTD/1Y/ALL
 function sliceByRange(hist, range) {
@@ -585,6 +585,7 @@ function renderLohas(ticker) {
 async function loadLohas() {
     if (lohasLoaded) return;
     const select = document.getElementById("lohas-select");
+    const pickDefault = tickers => tickers.includes("QQQ") ? "QQQ" : tickers[0];
 
     if (STATIC) {
         const bundle = STATIC.lohas || {};
@@ -618,7 +619,8 @@ async function loadLohas() {
             renderLohas(t);
         };
         if (tickers.length) {
-            const first = tickers[0];
+            const first = pickDefault(tickers);
+            select.value = first;
             lohasCache[first] = await (await fetch(API + "/api/lohas/" + encodeURIComponent(first))).json();
             renderLohas(first);
         }
@@ -631,7 +633,11 @@ async function loadLohas() {
     select.innerHTML = tickers.map(t => `<option value="${t}">${t}</option>`).join("");
     select.onchange = e => renderLohas(e.target.value);
     renderGauge(fearGreed);
-    if (tickers.length) renderLohas(tickers[0]);
+    if (tickers.length) {
+        const first = pickDefault(tickers);
+        select.value = first;
+        renderLohas(first);
+    }
     lohasLoaded = true;
 }
 
