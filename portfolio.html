@@ -229,22 +229,95 @@ const STATIC = (typeof window.STATIC_DATA !== "undefined") ? window.STATIC_DATA 
 const fmtTWD = v => v == null ? "—" : "NT$" + Number(v).toLocaleString("zh-TW", {maximumFractionDigits: 0});
 const fmtPct = v => (v == null ? "—" : Number(v).toFixed(2) + "%");
 
-// ---------- 持股表 ----------
-async function loadPortfolio() {
-    const area = document.getElementById("positions-area");
-    let data;
-    if (STATIC) {
-        data = STATIC.portfolio;
-    } else {
-        area.innerHTML = '<div class="loading">讀取即時報價中…</div>';
-        try {
-            data = await (await fetch(API + "/api/portfolio")).json();
-        } catch (e) {
-            area.innerHTML = '<div class="empty">無法連線後端，請確認 app.py 是否啟動。</div>';
-            return;
-        }
-    }
+// ---------------------------------------------------------------------
+// 靜態模式下要在瀏覽器端即時更新報價，需要一個跨網域代理（TWSE/Yahoo 不開放
+// 瀏覽器直接 fetch）。部署好 Cloudflare Worker（見 cloudflare-worker.js）後，
+// 把網址填在這裡即可啟用「開頁即時刷新」；留空則靜態頁維持每日快照。
+// ---------------------------------------------------------------------
+const WORKER_BASE_URL = ""; // 例如 "https://portfolio-proxy.<你的帳號>.workers.dev"
 
+function proxied(url) {
+    return WORKER_BASE_URL ? WORKER_BASE_URL + "?url=" + encodeURIComponent(url) : null;
+}
+
+async function fetchLiveQuote(ticker, isTaiwan, isCash) {
+    if (isCash) return {price: 1};
+    try {
+        if (isTaiwan) {
+            const code = ticker.replace(".TWO", "").replace(".TW", "");
+            const channel = ticker.endsWith(".TWO") ? `otc_${code}.tw` : `tse_${code}.tw`;
+            const url = `https://mis.twse.com.tw/stock/api/getStockInfo.jsp?ex_ch=${channel}&json=1&delay=0`;
+            const j = await (await fetch(proxied(url))).json();
+            const row = (j.msgArray || [])[0];
+            if (!row) return null;
+            let price = parseFloat(row.z);
+            if (isNaN(price)) price = parseFloat((row.b || "").split("_")[0]);
+            if (isNaN(price)) price = parseFloat(row.y);
+            return isNaN(price) ? null : {price};
+        } else {
+            const url = `https://query1.finance.yahoo.com/v8/finance/chart/${ticker}?range=5d&interval=1d`;
+            const j = await (await fetch(proxied(url))).json();
+            const meta = j.chart.result[0].meta;
+            return {priceUsd: meta.regularMarketPrice};
+        }
+    } catch (e) {
+        console.warn("即時報價失敗", ticker, e);
+        return null;
+    }
+}
+
+async function fetchLiveFxRate() {
+    try {
+        const url = "https://query1.finance.yahoo.com/v8/finance/chart/TWD=X?range=5d&interval=1d";
+        const j = await (await fetch(proxied(url))).json();
+        return j.chart.result[0].meta.regularMarketPrice;
+    } catch (e) {
+        return null;
+    }
+}
+
+async function refreshLivePortfolio() {
+    if (!STATIC || !WORKER_BASE_URL) return; // 未設定代理，維持快照
+    const base = STATIC.portfolio;
+    if (!base || !base.positions || !base.positions.length) return;
+
+    const fxRate = await fetchLiveFxRate() || base.fxRate;
+    const positions = await Promise.all(base.positions.map(async p => {
+        const live = await fetchLiveQuote(p.ticker, p.isTaiwan, p.isCash);
+        if (!live) return {...p}; // 抓不到就沿用快照值
+        let price = p.price;
+        if (p.isCash) {
+            price = 1;
+        } else if (p.isTaiwan) {
+            price = live.price != null ? live.price : p.price;
+        } else if (live.priceUsd != null) {
+            price = Math.round(live.priceUsd * fxRate * 100) / 100;
+        }
+        const value = price != null ? Math.round(price * p.shares * 100) / 100 : p.value;
+        return {...p, price, value, priceUsd: p.isTaiwan || p.isCash ? p.priceUsd : (live.priceUsd ?? p.priceUsd), fxRate: p.isTaiwan || p.isCash ? p.fxRate : fxRate};
+    }));
+
+    let total = 0;
+    positions.forEach(p => { if (p.value) total += p.value; });
+    let portfolioBeta = 0;
+    positions.forEach(p => {
+        p.weight = (p.value && total > 0) ? Math.round((p.value / total) * 10000) / 100 : 0;
+        if (p.beta != null) portfolioBeta += (p.value / total) * p.beta;
+    });
+    positions.sort((a, b) => (b.value || 0) - (a.value || 0));
+
+    livePortfolio = {
+        positions,
+        totalValue: Math.round(total * 100) / 100,
+        fxRate,
+        portfolioBeta: Math.round(portfolioBeta * 1000) / 1000,
+    };
+    renderPortfolio(livePortfolio);
+}
+
+// ---------- 持股表 ----------
+function renderPortfolio(data) {
+    const area = document.getElementById("positions-area");
     document.getElementById("total-value").textContent = fmtTWD(data.totalValue);
     document.getElementById("count-value").textContent = (data.positions || []).length;
     document.getElementById("beta-value").textContent = data.portfolioBeta != null ? Number(data.portfolioBeta).toFixed(2) : "—";
@@ -281,6 +354,25 @@ async function loadPortfolio() {
         <thead><tr><th>Ticker</th><th>名稱</th><th>股數</th><th>現價</th><th>台幣總額</th><th>占比</th><th>Beta</th><th></th></tr></thead>
         <tbody>${rows}</tbody>
     </table></div>`;
+}
+
+let livePortfolio = null;
+
+async function loadPortfolio() {
+    const area = document.getElementById("positions-area");
+    if (STATIC) {
+        renderPortfolio(livePortfolio || STATIC.portfolio);
+        return;
+    }
+    area.innerHTML = '<div class="loading">讀取即時報價中…</div>';
+    let data;
+    try {
+        data = await (await fetch(API + "/api/portfolio")).json();
+    } catch (e) {
+        area.innerHTML = '<div class="empty">無法連線後端，請確認 app.py 是否啟動。</div>';
+        return;
+    }
+    renderPortfolio(data);
 }
 
 async function removeHolding(ticker) {
@@ -498,6 +590,17 @@ async function loadLohas() {
         const bundle = STATIC.lohas || {};
         lohasCache = bundle.charts || {};
         fearGreed = bundle.fearGreed || {score: 50, rating: "資料暫缺"};
+        // CNN Fear & Greed 允許瀏覽器跨網域直接呼叫，不需代理即可即時更新
+        try {
+            const r = await fetch("https://production.dataviz.cnn.io/index/fearandgreed/graphdata");
+            const j = await r.json();
+            const fg = j.fear_and_greed || {};
+            if (fg.score != null) {
+                fearGreed = {score: Math.round(fg.score * 10) / 10, rating: String(fg.rating || "").toUpperCase()};
+            }
+        } catch (e) {
+            console.warn("Fear & Greed 即時更新失敗，使用快照值", e);
+        }
     } else {
         // 以目前持股（排除現金）作為可選商品，逐檔取五線譜
         const pf = await (await fetch(API + "/api/portfolio")).json();
@@ -553,6 +656,7 @@ async function refreshAll() {
     await loadPortfolio();
     await loadHistory();
     await loadLohas();
+    await refreshLivePortfolio(); // 靜態模式：若已設定 Worker 代理，覆蓋為即時報價
 }
 
 if (STATIC) {
@@ -561,7 +665,8 @@ if (STATIC) {
     if (addCard) addCard.style.display = "none";
     const stamp = document.getElementById("static-stamp");
     if (stamp && STATIC.generatedAt) {
-        stamp.textContent = "📸 靜態快照 · 資料產生時間：" + STATIC.generatedAt;
+        stamp.textContent = "📸 靜態快照 · 資料產生時間：" + STATIC.generatedAt
+            + (WORKER_BASE_URL ? "（持股報價已即時更新）" : "");
     }
     refreshAll();
 } else {
