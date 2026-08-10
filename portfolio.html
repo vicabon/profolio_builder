@@ -234,7 +234,7 @@ const fmtPct = v => (v == null ? "—" : Number(v).toFixed(2) + "%");
 // 瀏覽器直接 fetch）。部署好 Cloudflare Worker（見 cloudflare-worker.js）後，
 // 把網址填在這裡即可啟用「開頁即時刷新」；留空則靜態頁維持每日快照。
 // ---------------------------------------------------------------------
-const WORKER_BASE_URL = ""; // 例如 "https://portfolio-proxy.<你的帳號>.workers.dev"
+const WORKER_BASE_URL = "https://profolio-builder.vicabon.workers.dev"; // 例如 "https://portfolio-proxy.<你的帳號>.workers.dev"
 
 function proxied(url) {
     return WORKER_BASE_URL ? WORKER_BASE_URL + "?url=" + encodeURIComponent(url) : null;
