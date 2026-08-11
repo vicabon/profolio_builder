@@ -51,6 +51,12 @@
         .muted-note { color: var(--muted); font-size: 12px; }
         .loading { color: var(--muted); font-size: 14px; padding: 20px; text-align: center; }
         .empty { color: var(--muted); text-align: center; padding: 30px; }
+        .refresh-row { display: flex; justify-content: space-between; align-items: center; gap: 10px; margin-bottom: 20px; flex-wrap: wrap; }
+        .refresh-row .sub { margin-bottom: 0; }
+        #refresh-btn { padding: 8px 16px; font-size: 13px; }
+        #refresh-btn.spinning .spin-icon { display: inline-block; animation: spin 0.8s linear infinite; }
+        #refresh-btn:disabled { opacity: 0.6; cursor: not-allowed; }
+        @keyframes spin { from { transform: rotate(0deg); } to { transform: rotate(360deg); } }
         /* 分頁 */
         .tabs { display: flex; gap: 6px; margin-bottom: 18px; border-bottom: 2px solid var(--line); }
         .tab { padding: 10px 20px; border: none; background: none; cursor: pointer; font-size: 15px; font-weight: 600; color: var(--muted); border-bottom: 3px solid transparent; margin-bottom: -2px; }
@@ -99,7 +105,10 @@
 <div class="wrap">
     <h1>💼 我的投資組合儀表板</h1>
     <div class="sub">台股 / 台灣 ETF 串接證交所即時報價，美股經 Yahoo Finance 取價並依即時美元匯率換算台幣。盤中即時、盤後收盤。</div>
-    <div class="sub" id="static-stamp" style="color:#15803d;"></div>
+    <div class="refresh-row">
+        <div class="sub" id="static-stamp" style="color:#15803d;"></div>
+        <button class="btn ghost" id="refresh-btn" type="button"><span class="spin-icon">🔄</span> 更新報價與數據</button>
+    </div>
 
     <div class="tabs" id="tabs">
         <button class="tab active" data-tab="portfolio">💼 投資組合</button>
@@ -664,6 +673,20 @@ async function refreshAll() {
     await loadLohas();
     await refreshLivePortfolio(); // 靜態模式：若已設定 Worker 代理，覆蓋為即時報價
 }
+
+const refreshBtn = document.getElementById("refresh-btn");
+refreshBtn.addEventListener("click", async () => {
+    refreshBtn.disabled = true;
+    refreshBtn.classList.add("spinning");
+    try {
+        lohasLoaded = false; // 強制重新抓五線譜 + Fear&Greed，不使用快取
+        lohasCache = {};
+        await refreshAll();
+    } finally {
+        refreshBtn.disabled = false;
+        refreshBtn.classList.remove("spinning");
+    }
+});
 
 if (STATIC) {
     // 靜態快照模式：隱藏新增表單，顯示資料更新時間，不做輪詢。
