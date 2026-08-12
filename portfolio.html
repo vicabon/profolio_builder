@@ -237,6 +237,22 @@ const API = "";
 const STATIC = (typeof window.STATIC_DATA !== "undefined") ? window.STATIC_DATA : null;
 const fmtTWD = v => v == null ? "—" : "NT$" + Number(v).toLocaleString("zh-TW", {maximumFractionDigits: 0});
 const fmtPct = v => (v == null ? "—" : Number(v).toFixed(2) + "%");
+function nowStr() {
+    const d = new Date();
+    const pad = n => String(n).padStart(2, "0");
+    return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`;
+}
+
+// 記錄「更新報價與數據」最近一次完成的時間（含開頁時的首次自動更新）
+let lastUpdatedAt = null;
+function updateStampText() {
+    if (!STATIC) return;
+    const stamp = document.getElementById("static-stamp");
+    if (!stamp) return;
+    const stampTime = lastUpdatedAt || STATIC.generatedAt;
+    stamp.textContent = "📸 靜態快照 · 資料產生時間：" + stampTime
+        + (WORKER_BASE_URL ? "（持股報價已即時更新）" : "");
+}
 
 // ---------------------------------------------------------------------
 // 靜態模式下要在瀏覽器端即時更新報價，需要一個跨網域代理（TWSE/Yahoo 不開放
@@ -291,6 +307,7 @@ async function refreshLivePortfolio() {
     if (!base || !base.positions || !base.positions.length) return;
 
     const fxRate = await fetchLiveFxRate() || base.fxRate;
+    const nativeCloseByTicker = {}; // 樂活五線譜要用原幣價格（TW: 台幣, US: 美金），不是換算後的台幣總額
     const positions = await Promise.all(base.positions.map(async p => {
         const live = await fetchLiveQuote(p.ticker, p.isTaiwan, p.isCash);
         if (!live) return {...p}; // 抓不到就沿用快照值
@@ -299,8 +316,10 @@ async function refreshLivePortfolio() {
             price = 1;
         } else if (p.isTaiwan) {
             price = live.price != null ? live.price : p.price;
+            nativeCloseByTicker[p.ticker] = price;
         } else if (live.priceUsd != null) {
             price = Math.round(live.priceUsd * fxRate * 100) / 100;
+            nativeCloseByTicker[p.ticker] = live.priceUsd;
         }
         const value = price != null ? Math.round(price * p.shares * 100) / 100 : p.value;
         return {...p, price, value, priceUsd: p.isTaiwan || p.isCash ? p.priceUsd : (live.priceUsd ?? p.priceUsd), fxRate: p.isTaiwan || p.isCash ? p.fxRate : fxRate};
@@ -322,6 +341,33 @@ async function refreshLivePortfolio() {
         portfolioBeta: Math.round(portfolioBeta * 1000) / 1000,
     };
     renderPortfolio(livePortfolio);
+
+    // 把「歷史回朔」最新一天的總市值也換成剛剛算出的即時總資產，
+    // 讓走勢圖的最後一點反映按下「更新報價與數據」之後的最新數字。
+    if (historyCache && historyCache.dates && historyCache.dates.length) {
+        const lastIdx = historyCache.dates.length - 1;
+        const today = nowStr().slice(0, 10);
+        if (historyCache.dates[lastIdx] === today) {
+            historyCache.totalValue[lastIdx] = livePortfolio.totalValue;
+        } else {
+            // 快照最後一天不是今天（例如收盤後才建置），改成新增一筆今天的資料點
+            historyCache.dates.push(today);
+            historyCache.totalValue.push(livePortfolio.totalValue);
+        }
+        drawCharts(sliceByRange(historyCache, currentRange));
+    }
+
+    // 用剛剛抓到的原幣即時收盤價，更新樂活五線譜快取（只更新已載入過的商品，
+    // 未載入的等使用者切換到該商品時才會抓取，避免重複打 API）
+    const today = nowStr().slice(0, 10);
+    Object.keys(lohasCache).forEach(ticker => {
+        const liveClose = nativeCloseByTicker[ticker];
+        if (liveClose == null) return;
+        lohasCache[ticker] = recomputeLohasBundle(lohasCache[ticker], liveClose, today);
+    });
+    if (lohasSelected && lohasCache[lohasSelected]) {
+        renderLohas(lohasSelected);
+    }
 }
 
 // ---------- 持股表 ----------
@@ -504,6 +550,45 @@ let lohasCache = {};        // {ticker: chartData bundle}
 let fearGreed = null;
 let lohasSelected = null;
 let lohasLoaded = false;
+const LOHAS_WINDOW = 875; // 與後端 portfolio_data.py 的 _LOHAS_WINDOW 保持一致
+
+// 用最新即時收盤價更新五線譜的最後一天，並重新回歸整個窗口的 TL/±SD
+// （邏輯對應 portfolio_data.py 的 get_lohas：一次線性回歸 + 全樣本標準差）
+function recomputeLohasBundle(bundle, latestClose, todayDateStr) {
+    if (!bundle || !bundle.chartData || !bundle.chartData.length || latestClose == null) return bundle;
+    const data = bundle.chartData.map(r => ({...r}));
+    const lastIdx = data.length - 1;
+    if (data[lastIdx].date === todayDateStr) {
+        data[lastIdx] = {...data[lastIdx], close: latestClose};
+    } else {
+        data.push({date: todayDateStr, close: latestClose});
+    }
+    const windowed = data.slice(-LOHAS_WINDOW);
+    const n = windowed.length;
+    const closes = windowed.map(r => r.close);
+    const xs = closes.map((_, i) => i);
+    const xMean = xs.reduce((a, b) => a + b, 0) / n;
+    const yMean = closes.reduce((a, b) => a + b, 0) / n;
+    let num = 0, den = 0;
+    for (let i = 0; i < n; i++) { num += (xs[i] - xMean) * (closes[i] - yMean); den += (xs[i] - xMean) ** 2; }
+    const slope = den === 0 ? 0 : num / den;
+    const intercept = yMean - slope * xMean;
+    const tlArr = xs.map(x => slope * x + intercept);
+    let sumSqDiff = 0;
+    for (let i = 0; i < n; i++) sumSqDiff += (closes[i] - tlArr[i]) ** 2;
+    const sd = Math.sqrt(sumSqDiff / n);
+
+    const chartData = windowed.map((r, i) => ({
+        date: r.date,
+        close: Math.round(r.close * 100) / 100,
+        tl: Math.round(tlArr[i] * 100) / 100,
+        p1sd: Math.round((tlArr[i] + sd) * 100) / 100,
+        p2sd: Math.round((tlArr[i] + 2 * sd) * 100) / 100,
+        m1sd: Math.round((tlArr[i] - sd) * 100) / 100,
+        m2sd: Math.round((tlArr[i] - 2 * sd) * 100) / 100,
+    }));
+    return {...bundle, chartData, lastDate: chartData[chartData.length - 1].date};
+}
 
 function gaugeColor(score) {
     if (score <= 25) return "#cc0000";
@@ -594,7 +679,11 @@ function renderLohas(ticker) {
 async function loadLohas() {
     if (lohasLoaded) return;
     const select = document.getElementById("lohas-select");
-    const pickDefault = tickers => tickers.includes("QQQ") ? "QQQ" : tickers[0];
+    // 若使用者已選過商品（例如按下「更新報價與數據」前正在看某檔），保留原選擇
+    const pickDefault = tickers => {
+        if (lohasSelected && tickers.includes(lohasSelected)) return lohasSelected;
+        return tickers.includes("QQQ") ? "QQQ" : tickers[0];
+    };
 
     if (STATIC) {
         const bundle = STATIC.lohas || {};
@@ -672,6 +761,8 @@ async function refreshAll() {
     await loadHistory();
     await loadLohas();
     await refreshLivePortfolio(); // 靜態模式：若已設定 Worker 代理，覆蓋為即時報價
+    lastUpdatedAt = nowStr();
+    updateStampText();
 }
 
 const refreshBtn = document.getElementById("refresh-btn");
@@ -689,14 +780,9 @@ refreshBtn.addEventListener("click", async () => {
 });
 
 if (STATIC) {
-    // 靜態快照模式：隱藏新增表單，顯示資料更新時間，不做輪詢。
+    // 靜態快照模式：隱藏新增表單，不做輪詢；資料產生時間文字改由 refreshAll() 統一更新。
     const addCard = document.getElementById("add-card");
     if (addCard) addCard.style.display = "none";
-    const stamp = document.getElementById("static-stamp");
-    if (stamp && STATIC.generatedAt) {
-        stamp.textContent = "📸 靜態快照 · 資料產生時間：" + STATIC.generatedAt
-            + (WORKER_BASE_URL ? "（持股報價已即時更新）" : "");
-    }
     refreshAll();
 } else {
     refreshAll();
