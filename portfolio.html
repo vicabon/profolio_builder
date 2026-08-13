@@ -21,6 +21,9 @@
         .stat { flex: 1; min-width: 140px; background: linear-gradient(135deg,#f8fafc,#eef2f8); border: 1px solid var(--line); border-radius: 12px; padding: 16px; overflow: hidden; }
         .stat .label { font-size: 12px; color: var(--muted); }
         .stat .value { font-size: clamp(14px, 3.6vw, 20px); font-weight: 700; margin-top: 6px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; line-height: 1.2; }
+        .stat-breakdown { margin-top: 8px; font-size: 11px; color: var(--muted); display: flex; flex-direction: column; gap: 2px; }
+        .stat-breakdown span.k { color: var(--muted); }
+        .stat-breakdown span.v { color: var(--ink); font-weight: 600; }
         form.add { display: grid; grid-template-columns: 1.1fr 1.4fr .8fr auto auto; gap: 10px; align-items: end; }
         form.add .field { display: flex; flex-direction: column; gap: 5px; }
         form.add label { font-size: 12px; color: var(--muted); font-weight: 600; }
@@ -121,6 +124,7 @@
             <div class="stat">
                 <div class="label">總資產（台幣）</div>
                 <div class="value" id="total-value">—</div>
+                <div class="stat-breakdown" id="total-breakdown"></div>
             </div>
             <div class="stat">
                 <div class="label">持有檔數</div>
@@ -250,7 +254,7 @@ function updateStampText() {
     const stamp = document.getElementById("static-stamp");
     if (!stamp) return;
     const stampTime = lastUpdatedAt || STATIC.generatedAt;
-    stamp.textContent = "📸 靜態快照 · 資料產生時間：" + stampTime
+    stamp.textContent = "📸 資料產生時間：" + stampTime
         + (WORKER_BASE_URL ? "（持股報價已即時更新）" : "");
 }
 
@@ -267,8 +271,12 @@ function proxied(url) {
 
 async function fetchLiveQuote(ticker, isTaiwan, isCash) {
     if (isCash) return {price: 1};
+    // 報價來源一律以 ticker 本身命名規則判斷（.TW/.TWO 才是台股/證交所商品），
+    // 不可用「分類用的 isTaiwan」——例如台股複委託買美股 ETF，分類歸台股，
+    // 但報價仍要走 Yahoo（美股），不是 TWSE。
+    const tickerIsTw = /\.TWO?$/i.test(ticker);
     try {
-        if (isTaiwan) {
+        if (tickerIsTw) {
             const code = ticker.replace(".TWO", "").replace(".TW", "");
             const channel = ticker.endsWith(".TWO") ? `otc_${code}.tw` : `tse_${code}.tw`;
             const url = `https://mis.twse.com.tw/stock/api/getStockInfo.jsp?ex_ch=${channel}&json=1&delay=0`;
@@ -312,25 +320,37 @@ async function refreshLivePortfolio() {
         const live = await fetchLiveQuote(p.ticker, p.isTaiwan, p.isCash);
         if (!live) return {...p}; // 抓不到就沿用快照值
         let price = p.price;
+        let priceUsd = p.priceUsd;
         if (p.isCash) {
             price = 1;
-        } else if (p.isTaiwan) {
-            price = live.price != null ? live.price : p.price;
+        } else if (live.price != null) {
+            // 報價來源為 TWSE（ticker 本身是 .TW/.TWO），已是台幣，無需換算
+            price = live.price;
             nativeCloseByTicker[p.ticker] = price;
         } else if (live.priceUsd != null) {
+            // 報價來源為 Yahoo（美股），依即時匯率換算台幣；
+            // 即使分類為「台股複委託」（p.isTaiwan=true）也一樣，因為報價來源看 ticker 不看分類。
+            priceUsd = live.priceUsd;
             price = Math.round(live.priceUsd * fxRate * 100) / 100;
             nativeCloseByTicker[p.ticker] = live.priceUsd;
         }
         const value = price != null ? Math.round(price * p.shares * 100) / 100 : p.value;
-        return {...p, price, value, priceUsd: p.isTaiwan || p.isCash ? p.priceUsd : (live.priceUsd ?? p.priceUsd), fxRate: p.isTaiwan || p.isCash ? p.fxRate : fxRate};
+        const usesTwseSource = live.price != null;
+        return {...p, price, value, priceUsd: usesTwseSource ? p.priceUsd : priceUsd, fxRate: usesTwseSource ? p.fxRate : fxRate};
     }));
 
     let total = 0;
     positions.forEach(p => { if (p.value) total += p.value; });
     let portfolioBeta = 0;
+    const breakdown = {us: 0, tw: 0, cash: 0};
     positions.forEach(p => {
         p.weight = (p.value && total > 0) ? Math.round((p.value / total) * 10000) / 100 : 0;
         if (p.beta != null) portfolioBeta += (p.value / total) * p.beta;
+        if (p.value) {
+            if (p.isCash) breakdown.cash += p.value;
+            else if (p.isTaiwan) breakdown.tw += p.value;
+            else breakdown.us += p.value;
+        }
     });
     positions.sort((a, b) => (b.value || 0) - (a.value || 0));
 
@@ -339,6 +359,7 @@ async function refreshLivePortfolio() {
         totalValue: Math.round(total * 100) / 100,
         fxRate,
         portfolioBeta: Math.round(portfolioBeta * 1000) / 1000,
+        breakdown: {us: Math.round(breakdown.us * 100) / 100, tw: Math.round(breakdown.tw * 100) / 100, cash: Math.round(breakdown.cash * 100) / 100},
     };
     renderPortfolio(livePortfolio);
 
@@ -354,6 +375,7 @@ async function refreshLivePortfolio() {
             historyCache.dates.push(today);
             historyCache.totalValue.push(livePortfolio.totalValue);
         }
+        updateHistoryStatusText();
         drawCharts(sliceByRange(historyCache, currentRange));
     }
 
@@ -378,6 +400,15 @@ function renderPortfolio(data) {
     document.getElementById("beta-value").textContent = data.portfolioBeta != null ? Number(data.portfolioBeta).toFixed(2) : "—";
     document.getElementById("fx-value").textContent = data.fxRate ? Number(data.fxRate).toFixed(3) : "—";
 
+    const bd = data.breakdown || {};
+    const breakdownEl = document.getElementById("total-breakdown");
+    if (breakdownEl) {
+        breakdownEl.innerHTML = `
+            <div><span class="k">美股部分：</span><span class="v">${fmtTWD(bd.us)}</span></div>
+            <div><span class="k">台股部分：</span><span class="v">${fmtTWD(bd.tw)}</span></div>
+            <div><span class="k">台幣現金：</span><span class="v">${fmtTWD(bd.cash)}</span></div>`;
+    }
+
     if (!data.positions || !data.positions.length) {
         area.innerHTML = '<div class="empty">尚未有任何持股，請在上方新增。</div>';
         return;
@@ -386,13 +417,15 @@ function renderPortfolio(data) {
     const maxWeight = Math.max(...data.positions.map(p => p.weight || 0), 1);
     const rows = data.positions.map(p => {
         const tag = p.isCash ? '<span class="tag cash">現金</span>'
-            : (p.isTaiwan ? '<span class="tag tw">台股</span>' : '<span class="tag us">美股</span>');
+            : (p.isTaiwan
+                ? (p.market === "TW" ? '<span class="tag tw">台股複委託</span>' : '<span class="tag tw">台股</span>')
+                : '<span class="tag us">美股</span>');
         const usd = p.priceUsd != null ? `<div class="muted-note">$${Number(p.priceUsd).toFixed(2)} × ${Number(p.fxRate).toFixed(2)}</div>` : "";
         const barW = ((p.weight || 0) / maxWeight) * 90;
         const sharesCell = p.isCash ? "—" : Number(p.shares).toLocaleString("zh-TW");
         const priceCell = p.isCash ? "—"
             : (p.price == null ? "—" : "NT$" + Number(p.price).toLocaleString("zh-TW", {maximumFractionDigits: 2}) + usd);
-        const delCell = STATIC ? "" : `<button class="del" title="刪除" onclick="removeHolding('${p.ticker}')">✕</button>`;
+        const delCell = STATIC ? "" : `<button class="del" title="刪除" onclick="removeHolding('${p.ticker}', ${JSON.stringify(p.market || "")})">✕</button>`;
         return `<tr>
             <td><strong>${p.ticker}</strong>${tag}</td>
             <td>${p.name || ""}</td>
@@ -430,9 +463,11 @@ async function loadPortfolio() {
     renderPortfolio(data);
 }
 
-async function removeHolding(ticker) {
-    if (!confirm(`確定刪除 ${ticker}？`)) return;
-    await fetch(API + "/api/holdings/" + encodeURIComponent(ticker), {method: "DELETE"});
+async function removeHolding(ticker, market) {
+    if (!confirm(`確定刪除 ${ticker}${market ? "（" + market + "）" : ""}？`)) return;
+    const url = API + "/api/holdings/" + encodeURIComponent(ticker)
+        + (market ? "?market=" + encodeURIComponent(market) : "");
+    await fetch(url, {method: "DELETE"});
     await refreshAll();
 }
 
@@ -533,8 +568,14 @@ async function loadHistory() {
         status.textContent = "尚無足夠資料可回朔（請先新增持股）。";
         return;
     }
-    status.textContent = `資料區間：${historyCache.dates[0]} ~ ${historyCache.dates[historyCache.dates.length - 1]}`;
+    updateHistoryStatusText();
     drawCharts(sliceByRange(historyCache, currentRange));
+}
+
+function updateHistoryStatusText() {
+    const status = document.getElementById("history-status");
+    if (!status || !historyCache || !historyCache.dates || !historyCache.dates.length) return;
+    status.textContent = `資料區間：${historyCache.dates[0]} ~ ${historyCache.dates[historyCache.dates.length - 1]}`;
 }
 
 document.getElementById("range-buttons").addEventListener("click", e => {
@@ -647,7 +688,7 @@ function renderLohas(ticker) {
     const c = bundle.currencySymbol;
     const f = v => c + Number(v).toFixed(2);
 
-    document.getElementById("lohas-close-title").textContent = `${ticker} 最新收盤價`;
+    document.getElementById("lohas-close-title").textContent = `${ticker} 最新股價`;
     document.getElementById("lohas-close-value").textContent = f(latest.close);
     document.getElementById("lohas-tl-value").textContent = f(latest.tl);
     document.getElementById("lohas-chart-title").textContent = `📈 ${ticker} 樂活五線譜趨勢圖`;

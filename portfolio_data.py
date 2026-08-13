@@ -252,7 +252,10 @@ def get_history(holdings, start="2022-01-01"):
     for holding in holdings:
         qty = _to_float(holding.get("shares"))
         if qty:
-            shares[holding["ticker"].strip().upper()] = qty
+            key = holding["ticker"].strip().upper()
+            # 同 ticker 可能出現多筆（例如美股 QQQM + 台股複委託 QQQM），
+            # 對「總市值走勢」而言報價來源相同，股數應合併加總，不能覆蓋。
+            shares[key] = shares.get(key, 0.0) + qty
     if not shares:
         return _empty_history()
 

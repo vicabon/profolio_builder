@@ -54,6 +54,7 @@ def add_holding():
     ticker = (body.get("ticker") or "").strip().upper()
     name = (body.get("name") or "").strip()
     shares = body.get("shares")
+    market = (body.get("market") or "").strip().upper() or None
 
     if not ticker:
         return jsonify({"error": "ticker 不可為空"}), 400
@@ -63,16 +64,20 @@ def add_holding():
         return jsonify({"error": "shares 必須為數字"}), 400
 
     holdings = load_holdings()
-    # 同 ticker 則覆蓋股數，並補名稱
+    # 同 ticker + 同 market（例如美股 QQQM vs 台股複委託 QQQM）才視為同一筆，覆蓋股數
     for item in holdings:
-        if item["ticker"].upper() == ticker:
+        item_market = (item.get("market") or "").strip().upper() or None
+        if item["ticker"].upper() == ticker and item_market == market:
             item["shares"] = shares
             if name:
                 item["name"] = name
             save_holdings(holdings)
             return jsonify(holdings)
 
-    holdings.append({"ticker": ticker, "name": name, "shares": shares})
+    new_item = {"ticker": ticker, "name": name, "shares": shares}
+    if market:
+        new_item["market"] = market
+    holdings.append(new_item)
     save_holdings(holdings)
     return jsonify(holdings)
 
@@ -80,7 +85,13 @@ def add_holding():
 @app.route("/api/holdings/<ticker>", methods=["DELETE"])
 def delete_holding(ticker):
     ticker = ticker.strip().upper()
-    holdings = [h for h in load_holdings() if h["ticker"].upper() != ticker]
+    market = (request.args.get("market") or "").strip().upper() or None
+
+    def matches(item):
+        item_market = (item.get("market") or "").strip().upper() or None
+        return item["ticker"].upper() == ticker and item_market == market
+
+    holdings = [h for h in load_holdings() if not matches(h)]
     save_holdings(holdings)
     return jsonify(holdings)
 
@@ -93,12 +104,18 @@ def get_portfolio():
 
 
 def build_portfolio(holdings):
-    """組出持股快照（報價、台幣總額、占比、Beta、加權 Beta）。
+    """組出持股快照（報價、台幣總額、占比、Beta、加權 Beta、資產分類小計）。
 
     抽成獨立函式，讓 Flask 端點與靜態建置腳本共用。
+
+    holding 可帶 "market": "TW" 來強制歸類為台股資產（例如台股複委託買的美股 ETF，
+    報價仍沿用該 ticker 原本的美股/台股報價來源，只是統計分類不同）。
     """
     if not holdings:
-        return {"positions": [], "totalValue": 0, "fxRate": None, "portfolioBeta": 0}
+        return {
+            "positions": [], "totalValue": 0, "fxRate": None, "portfolioBeta": 0,
+            "breakdown": {"us": 0, "tw": 0, "cash": 0},
+        }
 
     quotes = portfolio_data.get_quotes([h["ticker"] for h in holdings])
     positions = []
@@ -112,6 +129,10 @@ def build_portfolio(holdings):
         if value:
             total += value
         beta = holding.get("beta")
+        is_cash = portfolio_data.is_cash(ticker)
+        market_override = (holding.get("market") or "").strip().upper() or None
+        # market 只影響資產分類（美股/台股統計），不影響報價來源
+        is_taiwan = (market_override == "TW") if market_override else portfolio_data.is_taiwan_ticker(ticker)
         positions.append(
             {
                 "ticker": ticker,
@@ -122,12 +143,14 @@ def build_portfolio(holdings):
                 "fxRate": quote.get("fxRate"),
                 "value": value,
                 "beta": float(beta) if beta is not None else None,
-                "isTaiwan": portfolio_data.is_taiwan_ticker(ticker),
-                "isCash": portfolio_data.is_cash(ticker),
+                "isTaiwan": is_taiwan,
+                "isCash": is_cash,
+                "market": market_override,
             }
         )
 
     portfolio_beta = 0.0
+    breakdown = {"us": 0.0, "tw": 0.0, "cash": 0.0}
     for position in positions:
         if position["value"] and total > 0:
             position["weight"] = round(position["value"] / total * 100, 2)
@@ -135,6 +158,13 @@ def build_portfolio(holdings):
                 portfolio_beta += (position["value"] / total) * position["beta"]
         else:
             position["weight"] = 0.0
+        if position["value"]:
+            if position["isCash"]:
+                breakdown["cash"] += position["value"]
+            elif position["isTaiwan"]:
+                breakdown["tw"] += position["value"]
+            else:
+                breakdown["us"] += position["value"]
 
     positions.sort(key=lambda p: p["value"] or 0, reverse=True)
     return {
@@ -142,6 +172,7 @@ def build_portfolio(holdings):
         "totalValue": round(total, 2),
         "fxRate": portfolio_data.get_usd_twd_rate(),
         "portfolioBeta": round(portfolio_beta, 3),
+        "breakdown": {k: round(v, 2) for k, v in breakdown.items()},
     }
 
 
@@ -174,12 +205,12 @@ def get_feargreed():
 
 
 def build_lohas_bundle(holdings):
-    """靜態建置用：把每檔持股（排除現金）的五線譜 + Fear&Greed 一次算好。"""
-    tickers = [
+    """靜態建置用：把每檔持股（排除現金、同 ticker 去重）的五線譜 + Fear&Greed 一次算好。"""
+    tickers = sorted({
         h["ticker"].upper()
         for h in holdings
         if not portfolio_data.is_cash(h["ticker"])
-    ]
+    })
     charts = {}
     for ticker in tickers:
         data = portfolio_data.get_lohas(ticker)
