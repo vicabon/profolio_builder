@@ -43,6 +43,12 @@ def index():
     return send_from_directory(BASE_DIR, "portfolio.html")
 
 
+@app.route("/debt.json")
+def debt_json():
+    """借貸負債資料（純靜態，Flask 與 GitHub Pages 都可直接讀取同一份檔案）。"""
+    return send_from_directory(BASE_DIR, "debt.json")
+
+
 @app.route("/api/holdings", methods=["GET"])
 def get_holdings():
     return jsonify(load_holdings())

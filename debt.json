@@ -1,0 +1,7 @@
+[
+  {"bank": "LineBank", "principal": 288252, "dueDay": 8, "monthlyPayment": 22538, "maturityDate": "2027-09-08", "asOfDate": "2026-08-14"},
+  {"bank": "LineBank", "principal": 350683, "dueDay": 26, "monthlyPayment": 22292, "maturityDate": "2027-11-26", "asOfDate": "2026-08-14"},
+  {"bank": "將來銀行", "principal": 446912, "dueDay": 19, "monthlyPayment": 12848, "maturityDate": "2029-07-19", "asOfDate": "2026-08-14"},
+  {"bank": "中國信託", "principal": 1053755, "dueDay": 13, "monthlyPayment": 26686, "maturityDate": "2030-01-13", "asOfDate": "2026-08-14"},
+  {"bank": "土地銀行", "principal": 60651, "dueDay": 14, "monthlyPayment": 3427, "maturityDate": "2028-01-14", "asOfDate": "2026-08-14"}
+]

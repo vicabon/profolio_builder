@@ -116,6 +116,7 @@
     <div class="tabs" id="tabs">
         <button class="tab active" data-tab="portfolio">💼 投資組合</button>
         <button class="tab" data-tab="lohas">📈 樂活五線譜</button>
+        <button class="tab" data-tab="debt">🏦 借貸負債</button>
     </div>
 
     <div id="tab-portfolio" class="tab-panel active">
@@ -232,6 +233,30 @@
         </div>
         <div id="lohas-sidebar" class="card"></div>
     </div><!-- /tab-lohas -->
+
+    <div id="tab-debt" class="tab-panel">
+        <div class="card">
+            <div class="summary-row">
+                <div class="stat">
+                    <div class="label">總剩餘貸款金額</div>
+                    <div class="value" id="debt-total-value">—</div>
+                </div>
+                <div class="stat">
+                    <div class="label">總剩餘還款金額（含利息）</div>
+                    <div class="value" id="debt-actual-total-value">—</div>
+                </div>
+                <div class="stat">
+                    <div class="label">每月固定還款總額</div>
+                    <div class="value" id="debt-monthly-total-value">—</div>
+                </div>
+            </div>
+        </div>
+        <div class="card">
+            <h2>🏦 借貸明細</h2>
+            <div id="debt-area"></div>
+            <div class="muted-note" style="margin-top:10px;">「實際還款金額」= 每月還款金額 × 剩餘還款期數，因每期還款含本金與利息，實際總負債會大於目前借貸剩餘金額。「年利率」依 <code>debt.json</code> 記錄基準日（asOfDate）當下的本金/月付/期數，用年金公式反推。每過一個還款日，借貸剩餘金額會自動依攤銷公式扣除當期本金部分，剩餘期數與金額依當日日期即時計算，開頁自動更新，不需按「更新報價與數據」。</div>
+        </div>
+    </div><!-- /tab-debt -->
 </div>
 
 <script>
@@ -780,6 +805,129 @@ async function loadLohas() {
     lohasLoaded = true;
 }
 
+// ================= 借貸負債分頁 =================
+let debtLoaded = false;
+let debtData = [];
+
+// 計算「從某個基準日」起算到到期日，共有幾個還款日（基準日當天若正好是還款日，算未扣款、計入一期）。
+function countRemainingPayments(dueDay, maturityDateStr, fromDate) {
+    const maturity = new Date(maturityDateStr + "T00:00:00");
+    let y = fromDate.getFullYear();
+    let m = fromDate.getMonth(); // 0-based
+    let firstPaymentDate = new Date(y, m, dueDay);
+    if (firstPaymentDate < fromDate) {
+        m += 1;
+        firstPaymentDate = new Date(y, m, dueDay);
+    }
+    let count = 0;
+    let cursor = firstPaymentDate;
+    while (cursor <= maturity) {
+        count++;
+        const ny = cursor.getFullYear();
+        const nm = cursor.getMonth() + 1;
+        cursor = new Date(ny, nm, dueDay);
+    }
+    return count;
+}
+
+// 用年金公式（PV = PMT × (1-(1+r)^-n)/r）反推每期利率 r，二分搜尋法。
+// 回傳月利率；若 monthlyPayment × periods <= principal（不含利息或資料異常）回傳 0。
+function solveMonthlyRate(principal, monthlyPayment, periods) {
+    if (periods <= 0) return 0;
+    if (monthlyPayment * periods <= principal) return 0;
+    let lo = 0, hi = 1;
+    for (let i = 0; i < 100; i++) {
+        const mid = (lo + hi) / 2;
+        const pv = mid === 0
+            ? monthlyPayment * periods
+            : monthlyPayment * (1 - Math.pow(1 + mid, -periods)) / mid;
+        if (pv > principal) lo = mid; else hi = mid;
+    }
+    return (lo + hi) / 2;
+}
+
+// 依基準日 (asOfDate) 反推出的期數/利率，攤銷到「今天」：
+// 每經過一個已發生的還款日，本金依年金攤銷公式扣掉當期本金部分。
+// 回傳 {principalToday, remainingToday, monthlyRate}
+function amortizeToToday(loan, today) {
+    const asOf = new Date((loan.asOfDate || today.toISOString().slice(0, 10)) + "T00:00:00");
+    const n0 = countRemainingPayments(loan.dueDay, loan.maturityDate, asOf);
+    const monthlyRate = solveMonthlyRate(loan.principal, loan.monthlyPayment, n0);
+
+    // 從 asOf 到 today 之間，已經發生（今天尚未算入）的還款日次數
+    let y = asOf.getFullYear();
+    let m = asOf.getMonth();
+    let cursor = new Date(y, m, loan.dueDay);
+    if (cursor < asOf) { m += 1; cursor = new Date(y, m, loan.dueDay); }
+    let elapsed = 0;
+    let principal = loan.principal;
+    while (cursor < today) {
+        const interest = principal * monthlyRate;
+        const principalPortion = loan.monthlyPayment - interest;
+        principal = Math.max(0, principal - principalPortion);
+        elapsed++;
+        const ny = cursor.getFullYear();
+        const nm = cursor.getMonth() + 1;
+        cursor = new Date(ny, nm, loan.dueDay);
+    }
+    const remainingToday = countRemainingPayments(loan.dueDay, loan.maturityDate, today);
+    return {principalToday: Math.round(principal), remainingToday, monthlyRate};
+}
+
+function renderDebt(list) {
+    const area = document.getElementById("debt-area");
+    if (!list || !list.length) {
+        area.innerHTML = '<div class="empty">尚無借貸資料。</div>';
+        ["debt-total-value", "debt-actual-total-value", "debt-monthly-total-value"].forEach(id => {
+            document.getElementById(id).textContent = "—";
+        });
+        return;
+    }
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+
+    let principalTotal = 0, actualTotal = 0, monthlyTotal = 0;
+    const rows = list.map(loan => {
+        const {principalToday, remainingToday, monthlyRate} = amortizeToToday(loan, today);
+        const actualPayoff = remainingToday * loan.monthlyPayment;
+        const annualRatePct = monthlyRate * 12 * 100;
+        principalTotal += principalToday;
+        actualTotal += actualPayoff;
+        monthlyTotal += loan.monthlyPayment;
+        return `<tr>
+            <td><strong>${loan.bank}</strong></td>
+            <td>${fmtTWD(principalToday)}</td>
+            <td>${fmtTWD(actualPayoff)}</td>
+            <td>每月 ${loan.dueDay} 日</td>
+            <td>${fmtTWD(loan.monthlyPayment)}</td>
+            <td>${remainingToday} 期</td>
+            <td>${loan.maturityDate}</td>
+            <td>${annualRatePct > 0 ? annualRatePct.toFixed(2) + "%" : "—"}</td>
+        </tr>`;
+    }).join("");
+
+    document.getElementById("debt-total-value").textContent = fmtTWD(principalTotal);
+    document.getElementById("debt-actual-total-value").textContent = fmtTWD(actualTotal);
+    document.getElementById("debt-monthly-total-value").textContent = fmtTWD(monthlyTotal);
+
+    area.innerHTML = `<div class="table-wrap"><table>
+        <thead><tr><th>借貸銀行</th><th>借貸剩餘金額</th><th>實際還款金額</th><th>每月還款日</th><th>每月還款金額</th><th>剩餘還款期數</th><th>貸款到期日</th><th>年利率</th></tr></thead>
+        <tbody>${rows}</tbody>
+    </table></div>`;
+}
+
+async function loadDebt() {
+    if (debtLoaded) return;
+    try {
+        debtData = await (await fetch("debt.json")).json();
+    } catch (e) {
+        document.getElementById("debt-area").innerHTML = '<div class="empty">借貸資料載入失敗。</div>';
+        return;
+    }
+    renderDebt(debtData);
+    debtLoaded = true;
+}
+
 // 分頁切換
 document.getElementById("tabs").addEventListener("click", e => {
     if (!e.target.classList.contains("tab")) return;
@@ -793,6 +941,8 @@ document.getElementById("tabs").addEventListener("click", e => {
             const c = document.getElementById("lohas-chart");
             if (c && c.data) Plotly.Plots.resize(c);
         });
+    } else if (target === "debt") {
+        loadDebt();
     }
 });
 
@@ -801,6 +951,7 @@ async function refreshAll() {
     await loadPortfolio();
     await loadHistory();
     await loadLohas();
+    await loadDebt();
     await refreshLivePortfolio(); // 靜態模式：若已設定 Worker 代理，覆蓋為即時報價
     lastUpdatedAt = nowStr();
     updateStampText();
