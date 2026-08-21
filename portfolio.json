@@ -3,9 +3,9 @@
   {"ticker": "009800.TW", "name": "中信NASDAQ", "shares": 1312000, "beta": 1},
   {"ticker": "00662.TW", "name": "富邦NASDAQ", "shares": 143000, "beta": 1},
   {"ticker": "00757.TW", "name": "統一FANG+", "shares": 10000, "beta": 1.5},
-  {"ticker": "QLD", "name": "ProShares Ultra QQQ", "shares": 165.075, "beta": 2},
-  {"ticker": "QQQ", "name": "Invesco QQQ", "shares": 375.527, "beta": 1},
-  {"ticker": "QQQM", "name": "Invesco NASDAQ 100 ETF", "shares": 4817.6859, "beta": 1},
+  {"ticker": "QLD", "name": "ProShares Ultra QQQ", "shares": 189.0748, "beta": 2},
+  {"ticker": "QQQ", "name": "Invesco QQQ", "shares": 375.5268, "beta": 1},
+  {"ticker": "QQQM", "name": "Invesco NASDAQ 100 ETF", "shares": 4806.7084, "beta": 1},
   {"ticker": "QQQM", "name": "台股複委託 QQQM", "shares": 180, "beta": 1, "market": "TW"},
   {"ticker": "TWD-CASH", "name": "台幣現金", "shares": 23500000, "type": "cash", "beta": 0}
 ]
